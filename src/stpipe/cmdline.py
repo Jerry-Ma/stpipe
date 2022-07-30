@@ -114,12 +114,15 @@ def _override_config_from_args(config, args):
     Overrides any configuration values in `config` with values from the
     parsed commandline arguments `args`.
     """
-    def set_value(subconf, key, val):
+    def set_value(subconf, key, val, rootkey):
         root, sep, rest = key.partition('.')
         if rest:
-            set_value(subconf.setdefault(root, {}), rest, val)
+            set_value(subconf.setdefault(root, {}), rest, val, rootkey)
         else:
             val, comment = config._handle_value(val)
+            # the handled val is written back to args, since they
+            # are to be used later
+            vars(args)[rootkey] = val
             if isinstance(val, str):
                 subconf[root] = FromCommandLine(val)
             else:
@@ -127,7 +130,7 @@ def _override_config_from_args(config, args):
 
     for key, val in vars(args).items():
         if val is not None:
-            set_value(config, key, val)
+            set_value(config, key, val, key)
 
 
 def just_the_step_from_cmdline(args, cls=None):
@@ -288,6 +291,22 @@ def just_the_step_from_cmdline(args, cls=None):
     try:
         step_class.finalize_config(config, config_file=config_file, merge=False)
 
+        # make sure the args are parsed to python types since they
+        # are used as-is later in the step instance.
+        # the config_parser.string_to_python_type expect args to be
+        # string or list of strings, however, these vals are already
+        # partially parsed by the configobj._handle_value. Therefore,
+        # we write our own routine here
+        def _parse_if_string(v):
+            if isinstance(v, str):
+                config_parser._parse(v)
+            return v
+        for key, val in vars(args).items():
+            if isinstance(val, list):
+                typed_val = [_parse_if_string(x) for x in val]
+            else:
+                typed_val = _parse_if_string(val)
+            vars(args)[key] = typed_val
         step = step_class.from_config_section(
             config, name=name, param_args=args)
     except config_parser.ValidationError as e:
